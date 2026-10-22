@@ -297,6 +297,7 @@ var gpsCircle = null;
 var userLatLng = null;
 var routeLayer = null;
 var routeDestinationMarker = null;
+var blockStartMarker = null;
 var compassHeading = null;
 var compassListening = false;
 
@@ -490,7 +491,7 @@ document.getElementById('compassButton').addEventListener('click', enableCompass
 
 
 /* =====================================
-   4. فعال‌سازی دستی بلوک
+   4. فعال‌سازی بلوک و نشانگر شروع جنوب‌غربی
 ===================================== */
 
 function findBlock(no) {
@@ -503,6 +504,52 @@ function setStatus(message) {
     if (statusElement) {
         statusElement.textContent = message;
     }
+}
+
+/* پیدا کردن رأس جنوب‌غربی از مختصات واقعی هندسه بلوک.
+   در صورت چند رأس با عرض جغرافیایی یکسان، غربی‌ترین رأس انتخاب می‌شود. */
+function getSouthwestVertex(feature) {
+    if (!feature || !feature.geometry || !feature.geometry.coordinates) return null;
+    var points = [];
+
+    function collectCoordinates(value) {
+        if (!Array.isArray(value)) return;
+        if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
+            points.push([value[0], value[1]]); // [longitude, latitude]
+            return;
+        }
+        value.forEach(collectCoordinates);
+    }
+
+    collectCoordinates(feature.geometry.coordinates);
+    if (!points.length) return null;
+
+    var southLat = Math.min.apply(null, points.map(function (p) { return p[1]; }));
+    var tolerance = 1e-8;
+    var southernPoints = points.filter(function (p) { return Math.abs(p[1] - southLat) <= tolerance; });
+    var westLng = Math.min.apply(null, southernPoints.map(function (p) { return p[0]; }));
+    return L.latLng(southLat, westLng);
+}
+
+function updateBlockStartMarker(selected) {
+    if (blockStartMarker) {
+        map.removeLayer(blockStartMarker);
+        blockStartMarker = null;
+    }
+    var startPoint = getSouthwestVertex(selected.layer.feature);
+    if (!startPoint) {
+        setStatus('بلوک فعال: ' + activeBlockNo + ' | رأس جنوب‌غربی از هندسه پیدا نشد.');
+        return;
+    }
+    var startIcon = L.divIcon({
+        className: 'block-start-icon',
+        html: '<div style="background:#0b8f45;color:#fff;border:2px solid #fff;border-radius:50%;width:25px;height:25px;line-height:25px;text-align:center;font:bold 11px Tahoma;box-shadow:0 1px 5px #333">شروع</div>',
+        iconSize: [31, 31],
+        iconAnchor: [15, 15]
+    });
+    blockStartMarker = L.marker(startPoint, { icon: startIcon, zIndexOffset: 1500 })
+        .addTo(map)
+        .bindPopup('نقطه شروع فهرست‌برداری<br>بلوک ' + activeBlockNo + '<br>گوشه جنوب‌غربی');
 }
 
 function activateBlock(no) {
@@ -534,7 +581,8 @@ function activateBlock(no) {
         }
     });
 
-    setStatus('حوزه ۰۰۲ | بلوک فعال: ' + activeBlockNo);
+    setStatus('حوزه ۰۰۲ | بلوک فعال: ' + activeBlockNo + ' | نقطه شروع: جنوب‌غربی');
+    updateBlockStartMarker(selected);
 
     map.fitBounds(selected.layer.getBounds(), {
         padding: [30, 30],
@@ -598,6 +646,7 @@ document.getElementById('resetActive').addEventListener('click', function () {
     }
 
     activeBlockNo = null;
+    if (blockStartMarker) { map.removeLayer(blockStartMarker); blockStartMarker = null; }
 
     blockLayers.forEach(function (item) {
         item.layer.setStyle(normalBlockStyle());
